@@ -214,6 +214,15 @@ const App = (() => {
     return JSON.stringify(state.vault, null, 2);
   }
 
+  async function importAllJSON(jsonText) {
+    let parsed;
+    try { parsed = JSON.parse(jsonText); } catch { return false; }
+    if (!parsed || typeof parsed.tables !== 'object') return false;
+    state.vault = parsed;
+    await persistVault();
+    return true;
+  }
+
   function exportCSV(tableName) {
     const tbl = getTable(tableName);
     if (!tbl) return '';
@@ -265,7 +274,7 @@ const App = (() => {
     // row
     addRow, updateCell, deleteRow,
     // io
-    importCSV, exportCSV, exportAllJSON,
+    importCSV, exportCSV, exportAllJSON, importAllJSON,
     // github
     setupGitHub,
     gitHubConfigured: () => GitHub.isConfigured(),
