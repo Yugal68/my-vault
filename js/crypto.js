@@ -9,7 +9,10 @@ const Crypto = (() => {
   const KEY_BITS = 256;
 
   function b64encode(buf) {
-    return btoa(String.fromCharCode(...new Uint8Array(buf)));
+    const bytes = new Uint8Array(buf);
+    let str = '';
+    for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+    return btoa(str);
   }
 
   function b64decode(str) {
