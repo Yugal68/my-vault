@@ -464,21 +464,18 @@ const UI = (() => {
         URL.revokeObjectURL(url);
         toast('Backup downloaded — store it somewhere safe.', 'success');
       }}, '⬇ Download All Tables'),
-      el('p', { class: 'settings-note' }, 'To restore: pick a vault-backup.json file below.'),
-      (() => {
-        const fileIn = el('input', { type: 'file', accept: '.json', class: 'settings-input' });
-        const restoreBtn = el('button', { class: 'btn-secondary', onclick: async () => {
-          const f = fileIn.files[0];
-          if (!f) { toast('Pick a backup file first.', 'error'); return; }
-          if (!confirm('This will REPLACE all current tables with the backup. Continue?')) return;
-          const text = await f.text();
-          const ok = await App.importAllJSON(text);
-          if (ok) { toast('Vault restored from backup!', 'success'); showTableList(); }
-          else toast('Invalid backup file.', 'error');
-        }}, '⬆ Restore from Backup');
-        const wrapper = el('div', {}, fileIn, restoreBtn);
-        return wrapper;
-      })()
+      el('p', { class: 'settings-note' }, 'To restore from a backup file, pick it below then tap Restore.'),
+      el('input', { type: 'file', accept: '.json', class: 'settings-input', id: 'restore-file-input' }),
+      el('button', { class: 'btn-secondary', onclick: async () => {
+        const fileIn = document.getElementById('restore-file-input');
+        const f = fileIn.files[0];
+        if (!f) { toast('Pick a backup .json file first.', 'error'); return; }
+        if (!confirm('This will REPLACE all current tables with the backup. Continue?')) return;
+        const text = await f.text();
+        const ok = await App.importAllJSON(text);
+        if (ok) { toast('Vault restored from backup!', 'success'); showTableList(); }
+        else toast('Invalid backup file.', 'error');
+      }}, '⬆ Restore from Backup')
     );
 
     // Import CSV section
