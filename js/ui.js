@@ -29,12 +29,11 @@ const UI = (() => {
     return window.confirm(msg);
   }
 
-  // Clipboard with auto-clear
+  // Clipboard — called directly from user gesture handlers only (iOS Safari requirement)
   function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(() => {
-      toast('Copied — clears in 30s', 'info');
-      setTimeout(() => navigator.clipboard.writeText(''), 30000);
-    });
+    navigator.clipboard.writeText(text)
+      .then(() => toast('Copied to clipboard', 'success'))
+      .catch(() => toast('Copy failed', 'error'));
   }
 
   // ── Sync status pill ─────────────────────────────────────────────────────
@@ -265,22 +264,46 @@ const UI = (() => {
           const colName = tbl.columns[ci] || '';
           const isSensitive = /password|pass|pwd|secret|pin|cvv|token/i.test(colName);
           const span = el('span', {
-            class: 'cell-val' + (isSensitive ? ' cell-hidden' : ''),
-            onclick: () => beginEdit(td, span, tableName, ri, ci, isSensitive, rebuildTable)
+            class: 'cell-val' + (isSensitive ? ' cell-hidden' : '')
           }, isSensitive && cell ? '••••••' : cell);
-          if (isSensitive && cell) {
-            span.addEventListener('dblclick', () => {
-              span.textContent = cell;
-              span.classList.remove('cell-hidden');
-            });
-            span.title = 'Click to edit · Double-click to reveal';
-          }
-          // Copy on long-press (touchstart + touchend timing)
-          let pressTimer;
+
+          // Long-press to copy — measured in touchend (a real user gesture, no setTimeout)
+          // This fixes the iOS Safari "not allowed by user agent" crash
+          let touchStartTime = 0;
+          let longPressTriggered = false;
           span.addEventListener('touchstart', () => {
-            pressTimer = setTimeout(() => { if (cell) copyToClipboard(cell); }, 600);
+            touchStartTime = Date.now();
+            longPressTriggered = false;
           }, { passive: true });
-          span.addEventListener('touchend', () => clearTimeout(pressTimer), { passive: true });
+          span.addEventListener('touchend', () => {
+            if (Date.now() - touchStartTime >= 600 && cell) {
+              longPressTriggered = true;
+              copyToClipboard(cell);
+            }
+          }, { passive: true });
+
+          if (isSensitive && cell) {
+            // Tap 1 → reveal value · Tap 2 → edit · Long-press → copy
+            let revealed = false;
+            span.title = 'Tap to reveal · Tap again to edit · Long-press to copy';
+            span.addEventListener('click', () => {
+              if (longPressTriggered) { longPressTriggered = false; return; }
+              if (!revealed) {
+                revealed = true;
+                span.textContent = cell;
+                span.classList.remove('cell-hidden');
+              } else {
+                beginEdit(td, span, tableName, ri, ci, isSensitive, rebuildTable);
+              }
+            });
+          } else {
+            // Non-sensitive: single click to edit
+            span.addEventListener('click', () => {
+              if (longPressTriggered) { longPressTriggered = false; return; }
+              beginEdit(td, span, tableName, ri, ci, isSensitive, rebuildTable);
+            });
+          }
+
           td.appendChild(span);
           tr.appendChild(td);
         });
