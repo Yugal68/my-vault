@@ -1,5 +1,5 @@
 // sw.js — Service worker: caches app shell for offline use
-const CACHE = 'mv-v4';
+const CACHE = 'mv-v5';
 const SHELL = [
   './',
   './index.html',
