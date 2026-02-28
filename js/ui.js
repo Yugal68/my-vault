@@ -454,6 +454,26 @@ const UI = (() => {
       );
     }
 
+    // Backup section
+    const today = new Date().toISOString().split('T')[0];
+    const backupSection = el('section', { class: 'settings-section' },
+      el('h2', {}, 'Backup'),
+      el('p', { class: 'settings-note' },
+        'Downloads ALL your tables as one file. Save it to iCloud Drive or Files app as a backup. ⚠️ This file is not encrypted — keep it private.'
+      ),
+      el('button', { class: 'btn-secondary', onclick: () => {
+        const json = App.exportAllJSON();
+        const blob = new Blob([json], { type: 'application/json' });
+        const url  = URL.createObjectURL(blob);
+        const a    = el('a', { href: url, download: `vault-backup-${today}.json` });
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        toast('Backup downloaded — store it somewhere safe.', 'success');
+      }}, '⬇ Download All Tables')
+    );
+
     // Import CSV section
     const importSection = el('section', { class: 'settings-section' },
       el('h2', {}, 'Import from Excel / CSV'),
@@ -506,7 +526,7 @@ const UI = (() => {
     }}, 'Change Password');
     pwSection.append(oldPw, newPw, newPw2, pwErr, pwBtn);
 
-    root().append(header, ghSection, importSection, pwSection);
+    root().append(header, ghSection, backupSection, importSection, pwSection);
   }
 
   // ── Public ────────────────────────────────────────────────────────────────
