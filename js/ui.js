@@ -130,17 +130,9 @@ const UI = (() => {
       isFirst ? 'Set a master password to create your vault.' : 'Enter your master password to unlock.'
     );
 
-    const resetLink = !isFirst ? el('p', { class: 'reset-link', onclick: () => {
-      if (!confirm('⚠️ This will DELETE your vault and all data. Only do this if you forgot your password.\n\nAre you sure?')) return;
-      localStorage.clear();
-      toast('Vault cleared. Set a new master password.', 'info');
-      showLogin();
-    }}, 'Forgot password? Reset vault') : null;
-
     form.append(pwInput);
     if (confirmInput) form.append(confirmInput);
     form.append(errEl, btn);
-    if (resetLink) form.append(resetLink);
     root().append(logo, title, sub, form);
     pwInput.focus();
   }
@@ -471,7 +463,22 @@ const UI = (() => {
         a.remove();
         URL.revokeObjectURL(url);
         toast('Backup downloaded — store it somewhere safe.', 'success');
-      }}, '⬇ Download All Tables')
+      }}, '⬇ Download All Tables'),
+      el('p', { class: 'settings-note' }, 'To restore: pick a vault-backup.json file below.'),
+      (() => {
+        const fileIn = el('input', { type: 'file', accept: '.json', class: 'settings-input' });
+        const restoreBtn = el('button', { class: 'btn-secondary', onclick: async () => {
+          const f = fileIn.files[0];
+          if (!f) { toast('Pick a backup file first.', 'error'); return; }
+          if (!confirm('This will REPLACE all current tables with the backup. Continue?')) return;
+          const text = await f.text();
+          const ok = await App.importAllJSON(text);
+          if (ok) { toast('Vault restored from backup!', 'success'); showTableList(); }
+          else toast('Invalid backup file.', 'error');
+        }}, '⬆ Restore from Backup');
+        const wrapper = el('div', {}, fileIn, restoreBtn);
+        return wrapper;
+      })()
     );
 
     // Import CSV section
