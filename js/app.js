@@ -210,6 +210,10 @@ const App = (() => {
     return true;
   }
 
+  function exportAllJSON() {
+    return JSON.stringify(state.vault, null, 2);
+  }
+
   function exportCSV(tableName) {
     const tbl = getTable(tableName);
     if (!tbl) return '';
@@ -261,7 +265,7 @@ const App = (() => {
     // row
     addRow, updateCell, deleteRow,
     // io
-    importCSV, exportCSV,
+    importCSV, exportCSV, exportAllJSON,
     // github
     setupGitHub,
     gitHubConfigured: () => GitHub.isConfigured(),
