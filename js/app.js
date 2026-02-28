@@ -228,8 +228,16 @@ const App = (() => {
     const ok = await GitHub.testConnection(owner, repo, token);
     if (!ok) return false;
     GitHub.setConfig(owner, repo, token);
-    // Immediately push current vault
-    await persistVault();
+    // If GitHub already has vault data → pull it (new device joining existing sync)
+    // If GitHub is empty → push local vault (first device setting up sync)
+    const remote = await GitHub.pull();
+    if (remote) {
+      const json = await Crypto.decrypt(remote, state.password);
+      state.vault = JSON.parse(json);
+      Storage.saveLocal(remote);
+    } else {
+      await persistVault();
+    }
     return true;
   }
 
