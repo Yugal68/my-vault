@@ -2,6 +2,7 @@
 
 const UI = (() => {
   const root = () => document.getElementById('app');
+  let editMode = false;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -56,6 +57,7 @@ const UI = (() => {
   // ── Login screen ──────────────────────────────────────────────────────────
 
   function showLogin() {
+    editMode = false;
     const isFirst = !App.hasVault();
     root().innerHTML = '';
 
@@ -145,6 +147,11 @@ const UI = (() => {
       el('span', { class: 'app-title' }, 'my-vault'),
       el('div', { class: 'header-actions' },
         el('span', { id: 'sync-status', class: 'sync-pill' }),
+        el('button', {
+          class: 'icon-btn' + (editMode ? ' edit-active' : ''),
+          title: editMode ? 'Edit Mode ON – tap to disable' : 'Edit Mode OFF – tap to enable',
+          onclick: () => { editMode = !editMode; showTableList(); }
+        }, '✏'),
         el('button', { class: 'icon-btn', title: 'Settings', onclick: showSettings }, '⚙'),
         el('button', { class: 'icon-btn', title: 'Lock', onclick: () => App.lock() }, '🔒')
       )
@@ -189,9 +196,10 @@ const UI = (() => {
       });
     }
 
-    const addBtn = el('button', { class: 'fab', title: 'New table', onclick: promptNewTable }, '+');
-
-    root().append(header, searchBox, listEl, addBtn);
+    root().append(header, searchBox, listEl);
+    if (editMode) {
+      root().append(el('button', { class: 'fab', title: 'New table', onclick: promptNewTable }, '+'));
+    }
     renderList();
     updateSyncStatus();
   }
@@ -227,37 +235,43 @@ const UI = (() => {
           el('span', {
             class: 'col-name',
             onclick: () => promptRenameColumn(tableName, ci, col, rebuildTable)
-          }, col),
-          el('button', {
+          }, col)
+        );
+        if (editMode) {
+          th.appendChild(el('button', {
             class: 'col-del',
             title: 'Delete column',
             onclick: () => promptDeleteColumn(tableName, ci, col, rebuildTable)
-          }, '×')
-        );
+          }, '×'));
+        }
         hrow.appendChild(th);
       });
-      // Add-column button as last header cell
-      hrow.appendChild(el('th', {},
-        el('button', {
-          class: 'add-col-btn',
-          title: 'Add column',
-          onclick: () => promptAddColumn(tableName, rebuildTable)
-        }, '+')
-      ));
+      // Add-column button as last header cell (edit mode only)
+      if (editMode) {
+        hrow.appendChild(el('th', {},
+          el('button', {
+            class: 'add-col-btn',
+            title: 'Add column',
+            onclick: () => promptAddColumn(tableName, rebuildTable)
+          }, '+')
+        ));
+      }
       thead.appendChild(hrow);
 
       const tbody = el('tbody');
       tbl.rows.forEach((row, ri) => {
         const tr = el('tr');
         tr.appendChild(el('td', { class: 'row-num' },
-          el('button', {
-            class: 'del-row-btn',
-            title: 'Delete row',
-            onclick: () => {
-              if (!confirm('Delete this row?')) return;
-              App.deleteRow(tableName, ri).then(rebuildTable);
-            }
-          }, '×')
+          editMode
+            ? el('button', {
+                class: 'del-row-btn',
+                title: 'Delete row',
+                onclick: () => {
+                  if (!confirm('Delete this row?')) return;
+                  App.deleteRow(tableName, ri).then(rebuildTable);
+                }
+              }, '×')
+            : el('span', { class: 'row-num-static' }, String(ri + 1))
         ));
         row.forEach((cell, ci) => {
           const td = el('td');
@@ -283,24 +297,24 @@ const UI = (() => {
           }, { passive: true });
 
           if (isSensitive && cell) {
-            // Tap 1 → reveal value · Tap 2 → edit · Long-press → copy
+            // Tap 1 → reveal value · Tap 2 → edit (edit mode only) · Long-press → copy
             let revealed = false;
-            span.title = 'Tap to reveal · Tap again to edit · Long-press to copy';
+            span.title = 'Tap to reveal · Long-press to copy';
             span.addEventListener('click', () => {
               if (longPressTriggered) { longPressTriggered = false; return; }
               if (!revealed) {
                 revealed = true;
                 span.textContent = cell;
                 span.classList.remove('cell-hidden');
-              } else {
+              } else if (editMode) {
                 beginEdit(td, span, tableName, ri, ci, isSensitive, rebuildTable);
               }
             });
           } else {
-            // Non-sensitive: single click to edit
+            // Non-sensitive: single click to edit (edit mode only)
             span.addEventListener('click', () => {
               if (longPressTriggered) { longPressTriggered = false; return; }
-              beginEdit(td, span, tableName, ri, ci, isSensitive, rebuildTable);
+              if (editMode) beginEdit(td, span, tableName, ri, ci, isSensitive, rebuildTable);
             });
           }
 
@@ -319,28 +333,38 @@ const UI = (() => {
     }
 
     const tbl = App.getTable(tableName);
+    const headerActions = el('div', { class: 'header-actions' },
+      el('button', {
+        class: 'icon-btn' + (editMode ? ' edit-active' : ''),
+        title: editMode ? 'Edit Mode ON – tap to disable' : 'Edit Mode OFF – tap to enable',
+        onclick: () => { editMode = !editMode; showTable(tableName); }
+      }, '✏'),
+      el('button', { class: 'icon-btn', title: 'Export CSV',
+        onclick: () => downloadCSV(tableName) }, '⬇')
+    );
+    if (editMode) {
+      headerActions.appendChild(el('button', { class: 'icon-btn danger', title: 'Delete table',
+        onclick: () => promptDeleteTable(tableName) }, '🗑'));
+    }
+    const titleEl = el('span', {
+      class: 'app-title tbl-title' + (editMode ? '' : ' tbl-readonly'),
+      onclick: editMode ? () => promptRenameTable(tableName) : null
+    }, tableName);
     const header = el('header', { class: 'app-header' },
       el('button', { class: 'back-btn', onclick: showTableList }, '‹ Back'),
-      el('span', {
-        class: 'app-title tbl-title',
-        onclick: () => promptRenameTable(tableName)
-      }, tableName),
-      el('div', { class: 'header-actions' },
-        el('button', { class: 'icon-btn', title: 'Export CSV',
-          onclick: () => downloadCSV(tableName) }, '⬇'),
-        el('button', { class: 'icon-btn danger', title: 'Delete table',
-          onclick: () => promptDeleteTable(tableName) }, '🗑')
-      )
+      titleEl,
+      headerActions
     );
 
     const rowCount = el('span', { class: 'row-count', id: 'row-count' }, '');
 
-    const addRowBtn = el('button', {
-      class: 'btn-secondary add-row-btn',
-      onclick: () => App.addRow(tableName).then(rebuildTable)
-    }, '+ Add Row');
-
-    root().append(header, rowCount, addRowBtn);
+    root().append(header, rowCount);
+    if (editMode) {
+      root().append(el('button', {
+        class: 'btn-secondary add-row-btn',
+        onclick: () => App.addRow(tableName).then(rebuildTable)
+      }, '+ Add Row'));
+    }
     rebuildTable();
   }
 
