@@ -63,10 +63,13 @@
     .app-title   { font-weight: 700; font-size: 18px; flex: 1; text-align: center; }
     .tbl-title   { cursor: pointer; }
     .tbl-title:hover { color: var(--accent); }
+    .tbl-title.tbl-readonly { cursor: default; }
+    .tbl-title.tbl-readonly:hover { color: inherit; }
     .header-actions { display: flex; gap: 8px; align-items: center; }
     .icon-btn    { font-size: 18px; padding: 4px 6px; border-radius: 6px; line-height: 1; }
     .icon-btn:hover  { background: var(--surface2); }
     .icon-btn.danger:hover { background: rgba(224,85,85,.15); }
+    .icon-btn.edit-active { background: rgba(255,165,0,.2); color: #ffa500; }
     .back-btn    { font-size: 16px; padding: 4px 8px; color: var(--accent); font-weight: 500; white-space: nowrap; }
 
     /* ── Sync pill ─────────────────────────────────────────────────────────── */
