@@ -14,6 +14,43 @@ const App = (() => {
 
   let lockTimer = null;
   const LOCK_TIMEOUT_MS = 5 * 60 * 1000;   // 5 minutes
+  let pendingSyncLog = null;  // deferred sync log (to avoid infinite persist loop)
+
+  // ── Logging helpers ─────────────────────────────────────────────────────
+
+  const SENSITIVE_RE = /password|pass|pwd|secret|pin|cvv|token/i;
+
+  function isSensitiveColumn(colName) {
+    return SENSITIVE_RE.test(colName);
+  }
+
+  function maskValue(val) {
+    return val ? '••••••' : '';
+  }
+
+  function addLog(action, tableName, details) {
+    if (!state.vault) return;
+    if (!state.vault.logs) state.vault.logs = [];
+    const entry = { t: Date.now(), a: action };
+    if (tableName) entry.tbl = tableName;
+    if (details) entry.d = details;
+    state.vault.logs.push(entry);
+  }
+
+  function purgeLogs() {
+    if (!state.vault || !state.vault.logs) return;
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    state.vault.logs = state.vault.logs.filter(e => e.t > cutoff);
+  }
+
+  async function logAndSave(action, tableName, details) {
+    addLog(action, tableName, details);
+    await persistVault();
+  }
+
+  function getLogs() {
+    return (state.vault && state.vault.logs) ? state.vault.logs : [];
+  }
 
   // ── Vault helpers ────────────────────────────────────────────────────────
 
@@ -39,8 +76,10 @@ const App = (() => {
     if (!state.vault) return;
     if (!state.vault.pinnedTables) state.vault.pinnedTables = [];
     const idx = state.vault.pinnedTables.indexOf(name);
-    if (idx === -1) state.vault.pinnedTables.push(name);
-    else state.vault.pinnedTables.splice(idx, 1);
+    const wasPinned = idx !== -1;
+    if (wasPinned) state.vault.pinnedTables.splice(idx, 1);
+    else state.vault.pinnedTables.push(name);
+    addLog(wasPinned ? 'unpin_table' : 'pin_table', name);
     await persistVault();
   }
 
@@ -68,11 +107,23 @@ const App = (() => {
 
   async function persistVault() {
     if (!state.vault || !state.password) return;
+    // Inject deferred sync log from previous persist (avoids infinite loop)
+    if (pendingSyncLog) {
+      if (!state.vault.logs) state.vault.logs = [];
+      state.vault.logs.push(pendingSyncLog);
+      pendingSyncLog = null;
+    }
     const json = JSON.stringify(state.vault);
     const encrypted = await Crypto.encrypt(json, state.password);
-    await Storage.save(encrypted);
+    const result = await Storage.save(encrypted);
     state.pendingSync = Storage.hasPending();
     UI.updateSyncStatus();
+    // Queue sync log for next persist
+    if (result.synced) {
+      pendingSyncLog = { t: Date.now(), a: 'sync_ok' };
+    } else {
+      pendingSyncLog = { t: Date.now(), a: 'sync_fail' };
+    }
   }
 
   // ── Auth ─────────────────────────────────────────────────────────────────
@@ -85,6 +136,7 @@ const App = (() => {
       state.password = password;
       state.vault = emptyVault();
       state.locked = false;
+      addLog('unlock');
       await persistVault();
       resetLockTimer();
       UI.showTableList();
@@ -99,6 +151,9 @@ const App = (() => {
     state.password = password;
     state.locked   = false;
     purgeBin();   // auto-remove bin items older than 30 days
+    purgeLogs();  // auto-remove log entries older than 30 days
+    addLog('unlock');
+    await persistVault();
     resetLockTimer();
     // Flush pending local changes to GitHub if any
     if (Storage.hasPending()) {
@@ -108,7 +163,13 @@ const App = (() => {
     return { ok: true, firstRun: false };
   }
 
-  function lock() {
+  async function lock(manual) {
+    if (manual === undefined) manual = true;
+    // Persist lock log before wiping state
+    if (state.vault && state.password) {
+      addLog('lock', null, manual ? null : { auto: true });
+      await persistVault();
+    }
     state.locked   = true;
     state.password = null;
     state.vault    = null;
@@ -121,7 +182,7 @@ const App = (() => {
   function resetLockTimer() {
     if (state.locked) return;   // Don't schedule a re-lock when already locked
     clearTimeout(lockTimer);
-    lockTimer = setTimeout(lock, LOCK_TIMEOUT_MS);
+    lockTimer = setTimeout(() => lock(false), LOCK_TIMEOUT_MS);
   }
 
   // Reset timer on any user activity
@@ -135,6 +196,7 @@ const App = (() => {
     name = name.trim();
     if (!name || state.vault.tables[name]) return false;
     state.vault.tables[name] = { columns: ['Column 1'], rows: [] };
+    addLog('create_table', name);
     await persistVault();
     return true;
   }
@@ -150,6 +212,7 @@ const App = (() => {
       const pi = state.vault.pinnedTables.indexOf(oldName);
       if (pi !== -1) state.vault.pinnedTables[pi] = newName;
     }
+    addLog('rename_table', newName, { from: oldName });
     await persistVault();
     return true;
   }
@@ -172,6 +235,7 @@ const App = (() => {
       if (pi !== -1) state.vault.pinnedTables.splice(pi, 1);
     }
     if (state.activeTable === name) state.activeTable = null;
+    addLog('delete_table', name);
     await persistVault();
   }
 
@@ -190,13 +254,17 @@ const App = (() => {
     if (state.vault.tables[name]) name = name + ' (Restored)';
     state.vault.tables[name] = { columns: entry.columns, rows: entry.rows };
     state.vault.bin.splice(idx, 1);
+    addLog('restore_table', name);
     await persistVault();
     return name;
   }
 
   async function permanentlyDelete(deletedAt) {
     const bin = state.vault.bin || [];
+    const entry = bin.find(e => e.deletedAt === deletedAt);
+    const name = entry ? entry.name : 'Unknown';
     state.vault.bin = bin.filter(e => e.deletedAt !== deletedAt);
+    addLog('perm_delete', name);
     await persistVault();
   }
 
@@ -214,21 +282,26 @@ const App = (() => {
     colName = colName.trim() || `Column ${tbl.columns.length + 1}`;
     tbl.columns.push(colName);
     tbl.rows.forEach(row => row.push(''));
+    addLog('add_col', tableName, { col: colName });
     await persistVault();
   }
 
   async function renameColumn(tableName, colIndex, newName) {
     const tbl = state.vault.tables[tableName];
     if (!tbl || colIndex < 0 || colIndex >= tbl.columns.length) return;
-    tbl.columns[colIndex] = newName.trim() || tbl.columns[colIndex];
+    const oldName = tbl.columns[colIndex];
+    tbl.columns[colIndex] = newName.trim() || oldName;
+    addLog('rename_col', tableName, { from: oldName, to: tbl.columns[colIndex] });
     await persistVault();
   }
 
   async function deleteColumn(tableName, colIndex) {
     const tbl = state.vault.tables[tableName];
     if (!tbl || tbl.columns.length <= 1) return;  // keep at least 1 column
+    const colName = tbl.columns[colIndex];
     tbl.columns.splice(colIndex, 1);
     tbl.rows.forEach(row => row.splice(colIndex, 1));
+    addLog('delete_col', tableName, { col: colName });
     await persistVault();
   }
 
@@ -238,13 +311,23 @@ const App = (() => {
     const tbl = state.vault.tables[tableName];
     if (!tbl) return;
     tbl.rows.push(new Array(tbl.columns.length).fill(''));
+    addLog('add_row', tableName);
     await persistVault();
   }
 
   async function updateCell(tableName, rowIndex, colIndex, value) {
     const tbl = state.vault.tables[tableName];
     if (!tbl) return;
+    const colName = tbl.columns[colIndex] || '';
+    const oldVal = tbl.rows[rowIndex][colIndex];
     tbl.rows[rowIndex][colIndex] = value;
+    const sensitive = isSensitiveColumn(colName);
+    addLog('edit_cell', tableName, {
+      col: colName,
+      row: rowIndex + 1,
+      old: sensitive ? maskValue(oldVal) : oldVal,
+      new: sensitive ? maskValue(value) : value
+    });
     await persistVault();
   }
 
@@ -252,6 +335,7 @@ const App = (() => {
     const tbl = state.vault.tables[tableName];
     if (!tbl) return;
     tbl.rows.splice(rowIndex, 1);
+    addLog('delete_row', tableName, { row: rowIndex + 1 });
     await persistVault();
   }
 
@@ -260,6 +344,7 @@ const App = (() => {
     if (!tbl || fromIndex < 0 || toIndex < 0 || fromIndex >= tbl.rows.length || toIndex >= tbl.rows.length) return;
     const [row] = tbl.rows.splice(fromIndex, 1);
     tbl.rows.splice(toIndex, 0, row);
+    addLog('move_row', tableName, { from: fromIndex + 1, to: toIndex + 1 });
     await persistVault();
   }
 
@@ -268,6 +353,7 @@ const App = (() => {
     if (!tbl || rowIndex <= 0 || rowIndex >= tbl.rows.length) return;
     const [row] = tbl.rows.splice(rowIndex, 1);
     tbl.rows.unshift(row);
+    addLog('move_row', tableName, { from: rowIndex + 1, to: 1 });
     await persistVault();
   }
 
@@ -345,6 +431,14 @@ const App = (() => {
     return true;
   }
 
+  // ── Visibility tracking ──────────────────────────────────────────────────
+
+  document.addEventListener('visibilitychange', () => {
+    if (state.locked || !state.vault) return;
+    addLog(document.hidden ? 'bg' : 'fg');
+    // Don't persist here — rides on next mutation save
+  });
+
   // ── Public API ────────────────────────────────────────────────────────────
 
   return {
@@ -370,6 +464,8 @@ const App = (() => {
     setupGitHub,
     gitHubConfigured: () => GitHub.isConfigured(),
     gitHubConfig: () => GitHub.getConfig(),
-    clearGitHub: () => GitHub.clearConfig()
+    clearGitHub: () => GitHub.clearConfig(),
+    // logging
+    addLog, logAndSave, getLogs, isSensitiveColumn
   };
 })();
