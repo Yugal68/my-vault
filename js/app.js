@@ -23,9 +23,29 @@ const App = (() => {
 
   function getTableNames() {
     if (!state.vault) return [];
-    return Object.keys(state.vault.tables).sort((a, b) =>
+    const pinned = state.vault.pinnedTables || [];
+    const all = Object.keys(state.vault.tables);
+    const pinnedSet = new Set(pinned);
+    const pinnedNames = all.filter(n => pinnedSet.has(n)).sort((a, b) =>
       a.toLowerCase().localeCompare(b.toLowerCase())
     );
+    const unpinnedNames = all.filter(n => !pinnedSet.has(n)).sort((a, b) =>
+      a.toLowerCase().localeCompare(b.toLowerCase())
+    );
+    return [...pinnedNames, ...unpinnedNames];
+  }
+
+  async function togglePinTable(name) {
+    if (!state.vault) return;
+    if (!state.vault.pinnedTables) state.vault.pinnedTables = [];
+    const idx = state.vault.pinnedTables.indexOf(name);
+    if (idx === -1) state.vault.pinnedTables.push(name);
+    else state.vault.pinnedTables.splice(idx, 1);
+    await persistVault();
+  }
+
+  function isTablePinned(name) {
+    return (state.vault?.pinnedTables || []).includes(name);
   }
 
   function getTable(name) {
@@ -78,7 +98,12 @@ const App = (() => {
     state.vault    = JSON.parse(json);
     state.password = password;
     state.locked   = false;
+    purgeBin();   // auto-remove bin items older than 30 days
     resetLockTimer();
+    // Flush pending local changes to GitHub if any
+    if (Storage.hasPending()) {
+      persistVault().catch(() => {});  // best-effort, don't block unlock
+    }
     UI.showTableList();
     return { ok: true, firstRun: false };
   }
@@ -120,15 +145,65 @@ const App = (() => {
     state.vault.tables[newName] = state.vault.tables[oldName];
     delete state.vault.tables[oldName];
     if (state.activeTable === oldName) state.activeTable = newName;
+    // Update pinned reference
+    if (state.vault.pinnedTables) {
+      const pi = state.vault.pinnedTables.indexOf(oldName);
+      if (pi !== -1) state.vault.pinnedTables[pi] = newName;
+    }
     await persistVault();
     return true;
   }
 
   async function deleteTable(name) {
-    if (!state.vault.tables[name]) return;
+    const tbl = state.vault.tables[name];
+    if (!tbl) return;
+    // Soft-delete: move to recycle bin
+    if (!state.vault.bin) state.vault.bin = [];
+    state.vault.bin.push({
+      name,
+      columns: tbl.columns,
+      rows: tbl.rows,
+      deletedAt: Date.now()
+    });
     delete state.vault.tables[name];
+    // Remove from pinned if applicable
+    if (state.vault.pinnedTables) {
+      const pi = state.vault.pinnedTables.indexOf(name);
+      if (pi !== -1) state.vault.pinnedTables.splice(pi, 1);
+    }
     if (state.activeTable === name) state.activeTable = null;
     await persistVault();
+  }
+
+  // ── Recycle Bin ──────────────────────────────────────────────────────────
+
+  function getRecycleBin() {
+    return state.vault?.bin || [];
+  }
+
+  async function restoreTable(deletedAt) {
+    const bin = state.vault.bin || [];
+    const idx = bin.findIndex(e => e.deletedAt === deletedAt);
+    if (idx === -1) return false;
+    const entry = bin[idx];
+    let name = entry.name;
+    if (state.vault.tables[name]) name = name + ' (Restored)';
+    state.vault.tables[name] = { columns: entry.columns, rows: entry.rows };
+    state.vault.bin.splice(idx, 1);
+    await persistVault();
+    return name;
+  }
+
+  async function permanentlyDelete(deletedAt) {
+    const bin = state.vault.bin || [];
+    state.vault.bin = bin.filter(e => e.deletedAt !== deletedAt);
+    await persistVault();
+  }
+
+  function purgeBin() {
+    if (!state.vault.bin) return;
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    state.vault.bin = state.vault.bin.filter(e => e.deletedAt > cutoff);
   }
 
   // ── Column CRUD ───────────────────────────────────────────────────────────
@@ -177,6 +252,22 @@ const App = (() => {
     const tbl = state.vault.tables[tableName];
     if (!tbl) return;
     tbl.rows.splice(rowIndex, 1);
+    await persistVault();
+  }
+
+  async function moveRow(tableName, fromIndex, toIndex) {
+    const tbl = state.vault.tables[tableName];
+    if (!tbl || fromIndex < 0 || toIndex < 0 || fromIndex >= tbl.rows.length || toIndex >= tbl.rows.length) return;
+    const [row] = tbl.rows.splice(fromIndex, 1);
+    tbl.rows.splice(toIndex, 0, row);
+    await persistVault();
+  }
+
+  async function pinRowToTop(tableName, rowIndex) {
+    const tbl = state.vault.tables[tableName];
+    if (!tbl || rowIndex <= 0 || rowIndex >= tbl.rows.length) return;
+    const [row] = tbl.rows.splice(rowIndex, 1);
+    tbl.rows.unshift(row);
     await persistVault();
   }
 
@@ -264,15 +355,15 @@ const App = (() => {
     get searchQuery()  { return state.searchQuery; },
     set searchQuery(v) { state.searchQuery = v; },
     get pendingSync()  { return state.pendingSync; },
-    getTableNames, getTable, filteredTableNames,
+    getTableNames, getTable, filteredTableNames, togglePinTable, isTablePinned,
     // auth
     unlock, lock, hasVault: () => Storage.hasLocal(),
     // table
-    createTable, renameTable, deleteTable,
+    createTable, renameTable, deleteTable, getRecycleBin, restoreTable, permanentlyDelete,
     // column
     addColumn, renameColumn, deleteColumn,
     // row
-    addRow, updateCell, deleteRow,
+    addRow, updateCell, deleteRow, moveRow, pinRowToTop,
     // io
     importCSV, exportCSV, exportAllJSON, importAllJSON,
     // github
