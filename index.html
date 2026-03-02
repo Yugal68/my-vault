@@ -88,6 +88,12 @@
     .tbl-meta    { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
     .tbl-arrow   { color: var(--text-dim); font-size: 20px; }
     .empty-state { padding: 40px 20px; text-align: center; color: var(--text-dim); }
+    .pin-btn     { font-size: 14px; padding: 4px 6px; opacity: 0.3; flex-shrink: 0; }
+    .pin-btn.pinned { opacity: 1; }
+    .bin-has-items { color: var(--accent); }
+    .bin-item     { cursor: default; }
+    .bin-info     { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+    .bin-actions  { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
 
     /* ── FAB ───────────────────────────────────────────────────────────────── */
     .fab { position: fixed; bottom: calc(24px + var(--safe-bot)); right: 20px;
@@ -114,7 +120,10 @@
     .col-del     { color: var(--text-dim); font-size: 14px; padding: 4px 6px; vertical-align: middle; }
     .col-del:hover { color: var(--danger); }
     .add-col-btn { padding: 8px 12px; color: var(--accent); font-size: 18px; font-weight: 300; }
-    .del-row-btn { color: var(--text-dim); font-size: 14px; padding: 4px 8px; }
+    .row-actions  { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px; padding: 2px !important; }
+    .row-move-btn { font-size: 11px; padding: 2px 4px; color: var(--text-dim); border-radius: 3px; line-height: 1; }
+    .row-move-btn:hover { color: var(--accent); background: var(--surface2); }
+    .del-row-btn { color: var(--text-dim); font-size: 14px; padding: 2px 4px; }
     .del-row-btn:hover { color: var(--danger); }
     .cell-val    { display: block; padding: 8px 10px; min-width: 100px; min-height: 36px;
       cursor: pointer; user-select: none; }
