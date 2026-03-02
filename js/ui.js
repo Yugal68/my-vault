@@ -37,6 +37,38 @@ const UI = (() => {
       .catch(() => toast('Copy failed', 'error'));
   }
 
+  // ── Log formatting ──────────────────────────────────────────────────
+
+  function formatLogEntry(entry) {
+    const t = entry.tbl ? `"${entry.tbl}"` : '';
+    const d = entry.d || {};
+    switch (entry.a) {
+      case 'unlock':       return 'Unlocked vault';
+      case 'lock':         return d.auto ? 'Auto-locked (timeout)' : 'Locked vault';
+      case 'open_table':   return `Opened ${t}`;
+      case 'create_table': return `Created table ${t}`;
+      case 'rename_table': return `Renamed "${d.from}" → ${t}`;
+      case 'delete_table': return `Deleted ${t} to bin`;
+      case 'add_row':      return `Added row in ${t}`;
+      case 'edit_cell':    return `Edited ${t} row ${d.row} [${d.col}]: ${d.old || '(empty)'} → ${d.new || '(empty)'}`;
+      case 'delete_row':   return `Deleted row ${d.row} in ${t}`;
+      case 'move_row':     return `Moved row ${d.from} → ${d.to} in ${t}`;
+      case 'add_col':      return `Added column "${d.col}" in ${t}`;
+      case 'rename_col':   return `Renamed column "${d.from}" → "${d.to}" in ${t}`;
+      case 'delete_col':   return `Deleted column "${d.col}" in ${t}`;
+      case 'pin_table':    return `Pinned ${t}`;
+      case 'unpin_table':  return `Unpinned ${t}`;
+      case 'restore_table':return `Restored ${t} from bin`;
+      case 'perm_delete':  return `Permanently deleted ${t}`;
+      case 'change_pw':    return 'Changed master password';
+      case 'sync_ok':      return 'Synced to GitHub';
+      case 'sync_fail':    return 'GitHub sync failed';
+      case 'bg':           return 'App backgrounded';
+      case 'fg':           return 'App foregrounded';
+      default:             return entry.a;
+    }
+  }
+
   // ── Sync status pill ─────────────────────────────────────────────────────
 
   function updateSyncStatus() {
@@ -160,7 +192,7 @@ const UI = (() => {
           onclick: () => { editMode = !editMode; showTableList(); }
         }, '✏'),
         el('button', { class: 'icon-btn', title: 'Settings', onclick: showSettings }, '⚙'),
-        el('button', { class: 'icon-btn', title: 'Lock', onclick: () => App.lock() }, '🔒')
+        el('button', { class: 'icon-btn', title: 'Lock', onclick: () => App.lock(true) }, '🔒')
       )
     );
 
@@ -175,11 +207,18 @@ const UI = (() => {
       }
     });
 
+    const countEl = el('div', { class: 'table-count', id: 'table-count' });
     const listEl = el('ul', { class: 'table-list', id: 'table-list' });
 
     function renderList() {
       listEl.innerHTML = '';
       const names = App.filteredTableNames();
+      const total = App.getTableNames().length;
+      if (App.searchQuery.trim()) {
+        countEl.textContent = `${names.length} of ${total} tables`;
+      } else {
+        countEl.textContent = `${total} table${total !== 1 ? 's' : ''}`;
+      }
       if (!names.length) {
         listEl.appendChild(el('li', { class: 'empty-state' },
           App.searchQuery ? 'No matches.' : 'No tables yet. Add one below.'
@@ -213,7 +252,7 @@ const UI = (() => {
       });
     }
 
-    root().append(header, searchBox, listEl);
+    root().append(header, searchBox, countEl, listEl);
     if (editMode) {
       root().append(el('button', { class: 'fab', title: 'New table', onclick: promptNewTable }, '+'));
     }
@@ -233,6 +272,7 @@ const UI = (() => {
 
   function showTable(tableName) {
     App.activeTable = tableName;
+    App.logAndSave('open_table', tableName).catch(() => {});  // best-effort
     root().innerHTML = '';
 
     function rebuildTable() {
@@ -535,6 +575,38 @@ const UI = (() => {
       el('span', { class: 'app-title' }, 'Settings')
     );
 
+    // Activity Log section
+    const logSection = el('section', { class: 'settings-section' },
+      el('h2', {}, 'Activity Log')
+    );
+    const logs = App.getLogs().slice().reverse();  // newest first
+    if (!logs.length) {
+      logSection.appendChild(el('p', { class: 'settings-note' }, 'No activity yet.'));
+    } else {
+      const logList = el('div', { class: 'log-list' });
+      let lastDateStr = '';
+      const today = new Date(); today.setHours(0,0,0,0);
+      const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+      logs.forEach(entry => {
+        const d = new Date(entry.t);
+        const dDay = new Date(d); dDay.setHours(0,0,0,0);
+        let dateLabel;
+        if (dDay.getTime() === today.getTime()) dateLabel = 'Today';
+        else if (dDay.getTime() === yesterday.getTime()) dateLabel = 'Yesterday';
+        else dateLabel = d.toLocaleDateString();
+        if (dateLabel !== lastDateStr) {
+          logList.appendChild(el('div', { class: 'log-date-header' }, dateLabel));
+          lastDateStr = dateLabel;
+        }
+        const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        logList.appendChild(el('div', { class: 'log-entry' },
+          el('span', { class: 'log-time' }, timeStr),
+          el('span', { class: 'log-desc' }, formatLogEntry(entry))
+        ));
+      });
+      logSection.appendChild(logList);
+    }
+
     // GitHub section
     const ghSection = el('section', { class: 'settings-section' },
       el('h2', {}, 'GitHub Sync')
@@ -580,7 +652,7 @@ const UI = (() => {
     }
 
     // Backup section
-    const today = new Date().toISOString().split('T')[0];
+    const todayStr = new Date().toISOString().split('T')[0];
     const backupSection = el('section', { class: 'settings-section' },
       el('h2', {}, 'Backup'),
       el('p', { class: 'settings-note' },
@@ -590,7 +662,7 @@ const UI = (() => {
         const json = App.exportAllJSON();
         const blob = new Blob([json], { type: 'application/json' });
         const url  = URL.createObjectURL(blob);
-        const a    = el('a', { href: url, download: `vault-backup-${today}.json` });
+        const a    = el('a', { href: url, download: `vault-backup-${todayStr}.json` });
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -653,17 +725,20 @@ const UI = (() => {
       if (!payload) { pwErr.textContent = 'No vault found.'; return; }
       const ok = await Crypto.verify(payload, oldPw.value);
       if (!ok) { pwErr.textContent = 'Current password is wrong.'; return; }
-      // Re-encrypt with new password
+      // Re-encrypt with new password — inject change_pw log into vault JSON
       const json = await Crypto.decrypt(payload, oldPw.value);
-      const newPayload = await Crypto.encrypt(json, newPw.value);
+      const parsed = JSON.parse(json);
+      if (!parsed.logs) parsed.logs = [];
+      parsed.logs.push({ t: Date.now(), a: 'change_pw' });
+      const newPayload = await Crypto.encrypt(JSON.stringify(parsed), newPw.value);
       await Storage.save(newPayload);
       // Update in-memory state by re-unlocking — use internal hack: call lock then unlock
-      App.lock();
+      App.lock(true);
       toast('Password changed. Please unlock with your new password.', 'success');
     }}, 'Change Password');
     pwSection.append(oldPw, newPw, newPw2, pwErr, pwBtn);
 
-    root().append(header, ghSection, backupSection, importSection, pwSection);
+    root().append(header, logSection, ghSection, backupSection, importSection, pwSection);
   }
 
   // ── Public ────────────────────────────────────────────────────────────────
