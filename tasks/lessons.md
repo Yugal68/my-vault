@@ -34,7 +34,7 @@ After fixing JS files, browser kept loading old broken version from SW cache.
 **Fix**: Bump cache version (mv-v1 → mv-v2 → ... → mv-v4 currently).
 **Rule**: Bump SW cache version after every meaningful JS change.
 After change, tell user: **Cmd+Option+R** (NOT Cmd+Shift+R).
-Current SW version: **mv-v12**. Next: mv-v13.
+Current SW version: **mv-v13**. Next: mv-v14.
 
 ### Bug #3 — Row/col counter was static
 **File**: js/ui.js — showTable()
