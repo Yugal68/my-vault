@@ -62,8 +62,10 @@ const Storage = (() => {
     try {
       await syncToGitHub(encryptedPayload);
       clearPending();
+      return { synced: true };
     } catch {
       markPending();  // Will retry on next successful network save
+      return { synced: false };
     }
   }
 
