@@ -143,10 +143,17 @@ const UI = (() => {
   function showTableList() {
     root().innerHTML = '';
 
+    const binCount = App.getRecycleBin().length;
+    const binLabel = binCount > 0 ? `\u{1F5D1} ${binCount}` : '\u{1F5D1}';
     const header = el('header', { class: 'app-header' },
       el('span', { class: 'app-title' }, 'my-vault'),
       el('div', { class: 'header-actions' },
         el('span', { id: 'sync-status', class: 'sync-pill' }),
+        el('button', {
+          class: 'icon-btn' + (binCount > 0 ? ' bin-has-items' : ''),
+          title: 'Recycle Bin',
+          onclick: showRecycleBin
+        }, binLabel),
         el('button', {
           class: 'icon-btn' + (editMode ? ' edit-active' : ''),
           title: editMode ? 'Edit Mode ON – tap to disable' : 'Edit Mode OFF – tap to enable',
@@ -181,13 +188,23 @@ const UI = (() => {
       }
       names.forEach(name => {
         const tbl  = App.getTable(name);
+        const pinned = App.isTablePinned(name);
         const meta = el('span', { class: 'tbl-meta' },
           `${tbl.columns.length} cols · ${tbl.rows.length} rows`
         );
+        const pinBtn = el('button', {
+          class: 'pin-btn' + (pinned ? ' pinned' : ''),
+          title: pinned ? 'Unpin' : 'Pin to top',
+          onclick: e => {
+            e.stopPropagation();
+            App.togglePinTable(name).then(renderList);
+          }
+        }, '\u{1F4CC}');
         const item = el('li', {
           class: 'tbl-item',
           onclick: () => showTable(name)
         },
+          pinBtn,
           el('span', { class: 'tbl-name' }, name),
           meta,
           el('span', { class: 'tbl-arrow' }, '›')
@@ -261,18 +278,37 @@ const UI = (() => {
       const tbody = el('tbody');
       tbl.rows.forEach((row, ri) => {
         const tr = el('tr');
-        tr.appendChild(el('td', { class: 'row-num' },
-          editMode
-            ? el('button', {
-                class: 'del-row-btn',
-                title: 'Delete row',
-                onclick: () => {
-                  if (!confirm('Delete this row?')) return;
-                  App.deleteRow(tableName, ri).then(rebuildTable);
-                }
-              }, '×')
-            : el('span', { class: 'row-num-static' }, String(ri + 1))
-        ));
+        if (editMode) {
+          const rowActions = el('td', { class: 'row-num row-actions' });
+          if (ri > 0) {
+            rowActions.appendChild(el('button', {
+              class: 'row-move-btn', title: 'Move up',
+              onclick: () => App.moveRow(tableName, ri, ri - 1).then(rebuildTable)
+            }, '\u25B2'));
+            rowActions.appendChild(el('button', {
+              class: 'row-move-btn', title: 'Pin to top',
+              onclick: () => App.pinRowToTop(tableName, ri).then(rebuildTable)
+            }, '\u{1F4CC}'));
+          }
+          if (ri < tbl.rows.length - 1) {
+            rowActions.appendChild(el('button', {
+              class: 'row-move-btn', title: 'Move down',
+              onclick: () => App.moveRow(tableName, ri, ri + 1).then(rebuildTable)
+            }, '\u25BC'));
+          }
+          rowActions.appendChild(el('button', {
+            class: 'del-row-btn', title: 'Delete row',
+            onclick: () => {
+              if (!confirm('Delete this row?')) return;
+              App.deleteRow(tableName, ri).then(rebuildTable);
+            }
+          }, '\u00D7'));
+          tr.appendChild(rowActions);
+        } else {
+          tr.appendChild(el('td', { class: 'row-num' },
+            el('span', { class: 'row-num-static' }, String(ri + 1))
+          ));
+        }
         row.forEach((cell, ci) => {
           const td = el('td');
           const colName = tbl.columns[ci] || '';
@@ -402,8 +438,9 @@ const UI = (() => {
   }
 
   async function promptDeleteTable(name) {
-    if (!confirm(`Delete table "${name}" and all its data? This cannot be undone.`)) return;
+    if (!confirm(`Delete table "${name}"? It will move to the Recycle Bin for 30 days.`)) return;
     await App.deleteTable(name);
+    toast(`"${name}" moved to Recycle Bin.`, 'info');
     showTableList();
   }
 
@@ -436,6 +473,55 @@ const UI = (() => {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }
+
+  // ── Recycle Bin ─────────────────────────────────────────────────────────
+
+  function showRecycleBin() {
+    root().innerHTML = '';
+    const header = el('header', { class: 'app-header' },
+      el('button', { class: 'back-btn', onclick: showTableList }, '‹ Back'),
+      el('span', { class: 'app-title' }, 'Recycle Bin')
+    );
+    const bin = App.getRecycleBin();
+    const list = el('ul', { class: 'table-list' });
+
+    function renderBin() {
+      list.innerHTML = '';
+      const items = App.getRecycleBin();
+      if (!items.length) {
+        list.appendChild(el('li', { class: 'empty-state' }, 'Recycle bin is empty.'));
+        return;
+      }
+      items.forEach(entry => {
+        const daysLeft = Math.max(0, Math.ceil((entry.deletedAt + 30 * 24 * 60 * 60 * 1000 - Date.now()) / 86400000));
+        const dateStr = new Date(entry.deletedAt).toLocaleDateString();
+        const item = el('li', { class: 'tbl-item bin-item' },
+          el('div', { class: 'bin-info' },
+            el('span', { class: 'tbl-name' }, entry.name),
+            el('span', { class: 'tbl-meta' }, `Deleted ${dateStr} \u00B7 ${daysLeft}d left`)
+          ),
+          el('div', { class: 'bin-actions' },
+            el('button', { class: 'btn-secondary', onclick: async () => {
+              const restoredAs = await App.restoreTable(entry.deletedAt);
+              if (restoredAs) {
+                toast(`"${restoredAs}" restored.`, 'success');
+                renderBin();
+              }
+            }}, 'Restore'),
+            el('button', { class: 'btn-danger', onclick: async () => {
+              if (!confirm(`Permanently delete "${entry.name}"? Cannot be undone.`)) return;
+              await App.permanentlyDelete(entry.deletedAt);
+              renderBin();
+            }}, 'Delete')
+          )
+        );
+        list.appendChild(item);
+      });
+    }
+
+    root().append(header, list);
+    renderBin();
   }
 
   // ── Settings ──────────────────────────────────────────────────────────────
@@ -554,7 +640,7 @@ const UI = (() => {
     const pwSection = el('section', { class: 'settings-section' },
       el('h2', {}, 'Change Master Password')
     );
-    const oldPw  = el('input', { type: 'password', placeholder: 'Current password', class: 'settings-input', autocomplete: 'current-password' });
+    const oldPw  = el('input', { type: 'password', placeholder: 'Current password', class: 'settings-input', autocomplete: 'off' });
     const newPw  = el('input', { type: 'password', placeholder: 'New password (min 8 chars)', class: 'settings-input', autocomplete: 'new-password' });
     const newPw2 = el('input', { type: 'password', placeholder: 'Confirm new password', class: 'settings-input', autocomplete: 'new-password' });
     const pwErr  = el('p', { class: 'error-msg' });
