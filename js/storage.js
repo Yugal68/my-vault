@@ -68,7 +68,9 @@ const Storage = (() => {
   }
 
   async function load() {
-    // Try GitHub first for freshest data; fall back to local cache
+    // If local has unsaved changes, don't overwrite with older remote data
+    if (hasPending()) return loadLocal();
+    // Otherwise try GitHub first for freshest data; fall back to local cache
     try {
       const remote = await syncFromGitHub();
       if (remote) {
